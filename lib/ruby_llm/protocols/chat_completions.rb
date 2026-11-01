@@ -17,6 +17,10 @@ module RubyLLM
       include ChatCompletions::Transcription
 
       public :render_transcription_options
+
+      def split_think_tags?
+        true
+      end
     end
   end
 end

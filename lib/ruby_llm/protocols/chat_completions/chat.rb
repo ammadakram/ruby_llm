@@ -116,6 +116,8 @@ module RubyLLM
           content, thinking_from_blocks =
             parse_content_and_thinking(message_data['content'] || message_data['refusal'])
           thinking_text = thinking_from_blocks || parse_thinking_text(message_data)
+          content, inline_thinking = split_inline_thinking(content)
+          thinking_text ||= inline_thinking
           thinking_signature = parse_thinking_signature(message_data)
 
           finish_reason = normalize_finish_reason(data.dig('choices', 0, 'finish_reason'))
@@ -139,6 +141,14 @@ module RubyLLM
             model: data['model'],
             raw: raw
           )
+        end
+
+        def split_inline_thinking(content)
+          return [content, nil] unless content.is_a?(String) && content.include?(Protocol::ThinkTagSplitter::OPEN)
+
+          splitter = Protocol::ThinkTagSplitter.new
+          text, thinking = splitter.push(content).zip(splitter.finish).map(&:join)
+          [text.empty? ? nil : text, thinking.empty? ? nil : thinking]
         end
 
         def reported_cost(_usage)

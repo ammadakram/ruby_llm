@@ -25,16 +25,55 @@ module RubyLLM
 
       def stream_response(payload, additional_headers = {}, &block)
         accumulator = StreamAccumulator.new
+        splitter = ThinkTagSplitter.new if split_think_tags?
 
         response = stream_events(stream_url, payload, additional_headers) do |data|
           chunk = build_chunk(data)
+          chunk = split_chunk_think_tags(chunk, splitter) if splitter
           accumulator.add chunk
           block.call chunk
+        end
+
+        if splitter
+          remainder = split_remainder_chunk(splitter)
+          if remainder
+            accumulator.add remainder
+            block.call remainder
+          end
         end
 
         message = accumulator.to_message(response)
         RubyLLM.logger.debug { "Stream completed: #{message.content}" }
         message
+      end
+
+      def split_think_tags?
+        false
+      end
+
+      def split_chunk_think_tags(chunk, splitter)
+        return chunk unless chunk.content.is_a?(String) && !chunk.content.empty?
+
+        content, thinking = splitter.push(chunk.content)
+        rewrite_chunk(chunk, content, thinking)
+      end
+
+      def split_remainder_chunk(splitter)
+        content, thinking = splitter.finish
+        return if content.empty? && thinking.empty?
+
+        rewrite_chunk(Chunk.new(role: :assistant, content: ''), content, thinking)
+      end
+
+      def rewrite_chunk(chunk, content, thinking)
+        existing = chunk.thinking
+        text = [existing&.text, (thinking unless thinking.empty?)].compact.join
+        chunk.dup.tap do |split|
+          split.instance_variable_set(:@content, content)
+          split.instance_variable_set(
+            :@thinking, Thinking.build(text: text.empty? ? nil : text, signature: existing&.signature)
+          )
+        end
       end
 
       # Posts +payload+ to +url+ as a server-sent event stream, yielding each

@@ -14,6 +14,10 @@ module RubyLLM
       include Responses::Streaming
       include Responses::Tools
 
+      def split_think_tags?
+        false
+      end
+
       SERVER_TOOL_ALIASES = {
         web_search: { tool: { type: 'web_search' } },
         file_search: { tool: { type: 'file_search' } },

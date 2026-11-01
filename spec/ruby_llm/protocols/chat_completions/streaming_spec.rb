@@ -170,4 +170,55 @@ RSpec.describe RubyLLM::Protocols::ChatCompletions::Streaming do
       )
     end.to raise_error(RubyLLM::Error, /not available in your region/)
   end
+
+  describe 'inline think tags' do
+    let(:chunks) { [] }
+
+    def stream_deltas(*deltas, target: protocol)
+      allow(target).to receive(:stream_events) do |*, &block|
+        deltas.each { |delta| block.call('model' => 'qwen3', 'choices' => [{ 'delta' => { 'content' => delta } }]) }
+        instance_double(Faraday::Response)
+      end
+      target.send(:stream_response, {}) { |chunk| chunks << chunk }
+    end
+
+    it 'splits think tags into thinking, even when a tag spans chunks' do
+      message = stream_deltas('<thi', 'nk>reason', 'ing</th', "ink>\nans", 'wer')
+
+      expect(message.content).to eq('answer')
+      expect(message.thinking.text).to eq('reasoning')
+    end
+
+    it 'yields the split to the stream block' do
+      stream_deltas('<think>secret', '</think>', "\nanswer")
+
+      expect(chunks.map(&:content).join).to eq('answer')
+      expect(chunks.filter_map { |chunk| chunk.thinking&.text }.join).to eq('secret')
+    end
+
+    it 'keeps a lone angle bracket as content' do
+      message = stream_deltas('a <', 'b')
+
+      expect(message.content).to eq('a <b')
+      expect(message.thinking).to be_nil
+    end
+
+    it 'treats a think tag after the start as plain text' do
+      message = stream_deltas('Use the <think> tag ', 'to wrap reasoning. More answer.')
+
+      expect(message.content).to eq('Use the <think> tag to wrap reasoning. More answer.')
+      expect(message.thinking).to be_nil
+    end
+
+    it 'treats an unclosed think block as thinking' do
+      message = stream_deltas('<think>cut off')
+
+      expect(message.content).to be_nil
+      expect(message.thinking.text).to eq('cut off')
+    end
+
+    it 'does not split on the Responses protocol' do
+      expect(RubyLLM::Protocols::Responses.allocate.send(:split_think_tags?)).to be(false)
+    end
+  end
 end

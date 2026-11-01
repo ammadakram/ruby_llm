@@ -4,6 +4,41 @@ require 'spec_helper'
 
 RSpec.describe RubyLLM::Protocols::ChatCompletions::Chat do
   describe '.parse_completion_body' do
+    def parse_content(content)
+      body = { 'model' => 'qwen3', 'choices' => [{ 'message' => { 'role' => 'assistant', 'content' => content } }] }
+      allow(described_class).to receive(:parse_tool_calls).and_return(nil)
+      described_class.parse_completion_body(body, raw: instance_double(Faraday::Response, body: body))
+    end
+
+    it 'leaves think tags after the start of the content alone' do
+      content = "Example:\n```\n<think>x</think> is a tag\n```\n  indented"
+
+      message = parse_content(content)
+
+      expect(message.content).to eq(content)
+      expect(message.thinking).to be_nil
+    end
+
+    it 'treats an unclosed leading think tag as thinking' do
+      message = parse_content('<think>cut off reasoning')
+
+      expect(message.content).to be_nil
+      expect(message.thinking.text).to eq('cut off reasoning')
+    end
+
+    it 'splits inline think tags out of content into thinking' do
+      body = { 'model' => 'qwen3',
+               'choices' => [{ 'message' => { 'role' => 'assistant',
+                                              'content' => "<think>reasoning</think>\nanswer" } }] }
+      response = instance_double(Faraday::Response, body: body)
+      allow(described_class).to receive(:parse_tool_calls).and_return(nil)
+
+      message = described_class.parse_completion_body(body, raw: response)
+
+      expect(message.content).to eq('answer')
+      expect(message.thinking.text).to eq('reasoning')
+    end
+
     it 'captures cached token information when present' do
       response_body = {
         'model' => model_for(:openai, :temperature),
